@@ -261,7 +261,7 @@ function finishGame(room) {
 
 // 挑选裁定者：房主优先，但必须在线——离线房主无法裁定，质疑会把对局卡住。
 // 涉及房主的词、或房主离线时，顺延给既不是词主也不是质疑者的在线玩家；
-// 实在没有合格人选（如两人局）时仍归房主，等其回来裁定（朋友局靠自觉）。
+// 实在没有合格人选时兜底归房主（可能离线，由调用方决定是否拒绝这次质疑）。
 function pickAdjudicator(room, node, challengerId) {
   const host = room.players.find(p => p.id === room.hostId);
   if (host && host.connected && node.ownerId !== room.hostId) return room.hostId;
@@ -283,6 +283,9 @@ function challenge(room, playerId, nodeId) {
   if (node.ownerId === playerId) return '不能质疑自己的词';
   if (node.reinforced) return '加固过的连接免疫质疑';
   const adjudicator = pickAdjudicator(room, node, playerId);
+  // 没有在线裁定者时直接拒绝：不扣次数、不暂停计时——否则质疑无人裁定会卡住整局
+  const adjOnline = room.players.some(p => p.id === adjudicator && p.connected);
+  if (!adjOnline) return '暂时没有在线的玩家可以裁定，无法发起质疑';
   player.tokensLeft -= 1;
   room.pendingChallenge = {
     id: uid('c'), nodeId, challengerId: playerId, adjudicatorId: adjudicator,

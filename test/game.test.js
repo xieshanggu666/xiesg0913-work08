@@ -334,15 +334,24 @@ test('房主提前离线时，新质疑的裁定者顺延给在线玩家', () =>
   assert.strictEqual(room.pendingChallenge, null);
 });
 
-test('房主离线且无合格人选时，新质疑仍归房主（等其回来）', () => {
+test('没有在线裁定者时，质疑被拒绝：不扣次数、不停计时、不卡对局', () => {
   const room = makeRoom(['甲', '乙', '丙']); // p0 房主
   g.endTurn(room, 'p0');
   playOk(room, '水花'); // p1 的词
-  room.players.find(p => p.id === 'p0').connected = false;
+  room.players.find(p => p.id === 'p0').connected = false; // 房主提前离线
   const n1 = room.nodes.find(n => n.word === '水花');
+  const challenger = room.players.find(p => p.id === 'p2');
+  const tokensBefore = challenger.tokensLeft;
+  const err = g.challenge(room, 'p2', n1.id); // p1 词主、p2 质疑者 → 无在线裁定者
+  assert.match(err, /裁定/);
+  assert.strictEqual(room.pendingChallenge, null, '不应产生待裁定质疑');
+  assert.strictEqual(challenger.tokensLeft, tokensBefore, '不扣质疑次数');
+  assert.ok(room.turn.deadline, '回合计时不应暂停');
+  // 房主回来后即可正常质疑
+  room.players.find(p => p.id === 'p0').connected = true;
   assert.strictEqual(g.challenge(room, 'p2', n1.id), null);
-  // p1 是词主、p2 是质疑者，没有第三个在线人选 → 只能等房主回来
   assert.strictEqual(room.pendingChallenge.adjudicatorId, 'p0');
+  assert.strictEqual(challenger.tokensLeft, tokensBefore - 1);
 });
 
 test('房主在线时，新质疑的裁定者仍是房主', () => {
