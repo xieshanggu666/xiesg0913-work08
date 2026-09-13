@@ -318,3 +318,38 @@ test('历史战绩摘要：名次、得分、胜者与时间；未结束房间�
   assert.strictEqual(s1.yourRank, 2);
   assert.strictEqual(s1.yourTotal, 0);
 });
+
+test('房主提前离线时，新质疑的裁定者顺延给在线玩家', () => {
+  // 4 人局：房主 p0 离线；p1 的词被 p2 质疑 → 裁定者应是在线的 p3，而不是离线房主
+  const room = g.newRoom('TESTOFF', 'p0', '甲');
+  ['p0', 'p1', 'p2', 'p3'].forEach((id, i) => g.addPlayer(room, id, `玩家${i}`));
+  g.startGame(room, 'p0', () => 0.01);
+  g.endTurn(room, 'p0'); // 轮到 p1
+  g.playWord(room, 'p1', { word: '水花', parentId: 'start0', relation: 'synonym', reason: '合理的解释' });
+  room.players.find(p => p.id === 'p0').connected = false; // 房主提前离线
+  const n1 = room.nodes.find(n => n.word === '水花');
+  assert.strictEqual(g.challenge(room, 'p2', n1.id), null);
+  assert.strictEqual(room.pendingChallenge.adjudicatorId, 'p3', '离线房主不应再收到新质疑');
+  assert.strictEqual(g.resolveChallenge(room, 'p3', 'reject'), null, '在线裁定者可正常裁定，对局不停住');
+  assert.strictEqual(room.pendingChallenge, null);
+});
+
+test('房主离线且无合格人选时，新质疑仍归房主（等其回来）', () => {
+  const room = makeRoom(['甲', '乙', '丙']); // p0 房主
+  g.endTurn(room, 'p0');
+  playOk(room, '水花'); // p1 的词
+  room.players.find(p => p.id === 'p0').connected = false;
+  const n1 = room.nodes.find(n => n.word === '水花');
+  assert.strictEqual(g.challenge(room, 'p2', n1.id), null);
+  // p1 是词主、p2 是质疑者，没有第三个在线人选 → 只能等房主回来
+  assert.strictEqual(room.pendingChallenge.adjudicatorId, 'p0');
+});
+
+test('房主在线时，新质疑的裁定者仍是房主', () => {
+  const room = makeRoom(['甲', '乙', '丙']);
+  g.endTurn(room, 'p0');
+  playOk(room, '水花'); // p1 的词
+  const n1 = room.nodes.find(n => n.word === '水花');
+  assert.strictEqual(g.challenge(room, 'p2', n1.id), null);
+  assert.strictEqual(room.pendingChallenge.adjudicatorId, 'p0');
+});
