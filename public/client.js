@@ -35,7 +35,7 @@
     ws = new WebSocket(`${proto}://${location.host}`);
     ws.onopen = () => {
       if (store.token) send({ type: 'reconnect', token: store.token });
-      if (store.history.length) send({ type: 'history', tokens: store.history.map(e => e.token) });
+      requestHistory();
     };
     ws.onmessage = (e) => handle(JSON.parse(e.data));
     ws.onclose = () => {
@@ -85,12 +85,25 @@
   // ---------- 历史与战绩 ----------
 
   let historyEntries = [];
+  let historyQueryTokens = []; // 最近一次历史查询覆盖的 token，决定清理失效记录的范围
+
+  function requestHistory() {
+    const tokens = store.history.map(e => e.token);
+    if (!tokens.length) { historyEntries = []; renderHistory(); return; }
+    historyQueryTokens = tokens;
+    send({ type: 'history', tokens });
+  }
 
   function onHistory(entries) {
-    historyEntries = entries;
-    // 服务器只回它认得的 token：本地失效记录（房间已删/数据已清）顺势清掉
+    // 只清理"本次查询过、但服务器已不认得"的 token（房间已删/数据已清）。
+    // 不能按"未出现在结果中"全量清理：查询发出后，其他标签页可能又加入了新房间，
+    // 那些记录不在本次查询的覆盖范围里，全量清理会把它们误删掉。
     const valid = new Set(entries.map(e => e.token));
-    store.history = store.history.filter(e => valid.has(e.token));
+    const queried = new Set(historyQueryTokens);
+    store.history = store.history.filter(e => !queried.has(e.token) || valid.has(e.token));
+    // 发现有本次查询未覆盖的新记录：补一次查询，把它们也带进列表
+    if (store.history.some(e => !queried.has(e.token))) { requestHistory(); return; }
+    historyEntries = entries;
     renderHistory();
   }
 

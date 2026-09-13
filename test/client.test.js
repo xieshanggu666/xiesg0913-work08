@@ -122,3 +122,45 @@ test('保存锁定只能由服务器答复或断线解除，超时不得误解�
     global.clearTimeout = realClearTimeout;
   }
 });
+
+test('多标签页：历史响应只清理本次查询过的失效 token，不误删新记录', () => {
+  // 换成真正可用的 localStorage（另一标签页的写入体现为同一存储）
+  const mem = {};
+  global.localStorage = {
+    getItem: (k) => (k in mem ? mem[k] : null),
+    setItem: (k, v) => { mem[k] = String(v); },
+    removeItem: (k) => { delete mem[k]; },
+  };
+  const readHistory = () => JSON.parse(mem.wt_history || '[]');
+  mem.wt_history = JSON.stringify([
+    { token: 'tokA', roomCode: 'AAAA' },
+    { token: 'tokB', roomCode: 'BBBB' },
+  ]);
+
+  const historyReqs = () => sentMsgs.filter(m => m.type === 'history');
+  const before = historyReqs().length;
+  ws.onopen(); // 重新连接 → 用当前快照发起历史查询
+  assert.strictEqual(historyReqs().length, before + 1);
+  assert.deepStrictEqual(historyReqs().at(-1).tokens, ['tokA', 'tokB']);
+
+  // 查询在途期间，另一个标签页开了新房并写入 tokC
+  mem.wt_history = JSON.stringify([...readHistory(), { token: 'tokC', roomCode: 'CCCC' }]);
+
+  const entry = (token, code) => ({ token, code, phase: 'ended', createdAt: 1, endedAt: 2,
+    youId: 'me', youName: '甲', players: ['甲', '乙'], winner: 'me', winnerName: '甲',
+    yourRank: 1, yourTotal: 8 });
+  // 服务器响应只覆盖 tokA/tokB（tokC 不在本次查询里）
+  recv({ type: 'history', entries: [entry('tokA', 'AAAA'), entry('tokB', 'BBBB')] });
+
+  // 关键回归：tokC 未被本次查询覆盖，不得被误删
+  assert.ok(readHistory().some(e => e.token === 'tokC'), '其他标签页新增的记录不得被清理');
+  // 发现未覆盖的新记录后应补发一次查询，把它也带进列表
+  assert.strictEqual(historyReqs().length, before + 2, '发现新记录应补发查询');
+  assert.ok(historyReqs().at(-1).tokens.includes('tokC'));
+
+  // 第二次响应：tokC 有效；tokB 已被服务器删除 → 只清 tokB
+  recv({ type: 'history', entries: [entry('tokA', 'AAAA'), entry('tokC', 'CCCC')] });
+  const tokens = readHistory().map(e => e.token);
+  assert.ok(tokens.includes('tokA') && tokens.includes('tokC'), '有效记录保留');
+  assert.ok(!tokens.includes('tokB'), '查询过且服务器不认得的记录才被清理');
+});
