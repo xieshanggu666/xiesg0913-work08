@@ -341,6 +341,24 @@ const handlers = {
     if (room.phase !== 'ended') return sendErr(ws, '游戏结束后才能回放');
     sendTo(ctx.playerId, { type: 'replay', frames: game.buildReplay(room) });
   },
+
+  // 历史与战绩：客户端凭本地保存的玩家 token 列表，换取每个房间的战绩摘要。
+  // 观战 token 是临时只读身份，不纳入历史；失效 token（房间已删/数据已清）静默跳过，
+  // 客户端按"只保留服务器认得的 token"顺势清理本地记录。
+  history(ws, ctx, msg) {
+    const list = Array.isArray(msg.tokens) ? msg.tokens.slice(0, 50) : [];
+    const entries = [];
+    for (const token of list) {
+      const ref = tokens.get(token);
+      if (!ref || ref.spectator) continue;
+      const room = rooms.get(ref.roomCode);
+      if (!room) continue;
+      const summary = game.historySummary(room, ref.playerId);
+      if (summary) entries.push({ token, ...summary });
+    }
+    entries.sort((a, b) => (b.endedAt || b.createdAt) - (a.endedAt || a.createdAt));
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'history', entries }));
+  },
 };
 
 function ctxRoom(ctx) {

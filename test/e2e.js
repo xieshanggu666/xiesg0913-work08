@@ -219,7 +219,21 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   S2c.send({ type: 'replay' });
   await S2c.waitFor(c => c.msgs.some(m => m.type === 'replay'));
   check('重新观战后仍可看回放', S2c.msgs.some(m => m.type === 'replay' && m.frames.length === frames.length));
+
+  // 观战 token 是临时身份，不纳入历史
+  S2c.send({ type: 'history', tokens: [S2c.token] });
+  await S2c.waitFor(c => c.msgs.some(m => m.type === 'history'));
+  check('观战 token 不进历史', S2c.msgs.find(m => m.type === 'history').entries.length === 0);
   S2c.ws.close();
+
+  // 历史与战绩：凭本地保存的玩家 token 换取战绩摘要；失效 token 静默跳过
+  A2.send({ type: 'history', tokens: [tokenAEnd, 'invalid-token'] });
+  await A2.waitFor(c => c.msgs.some(m => m.type === 'history'));
+  const hist = A2.msgs.find(m => m.type === 'history').entries;
+  check('历史只返回有效 token 的房间', hist.length === 1 && hist[0].code === code);
+  check('战绩含名次/得分/胜者/结束时间',
+    hist[0].phase === 'ended' && hist[0].yourRank === 1 && hist[0].yourTotal > 0 &&
+    hist[0].winnerName === '甲' && hist[0].endedAt > 0);
 
   // 落盘：结束的房间不带观战者与观战 token，旧观战记录不残留
   await sleep(500); // 等 300ms 防抖落盘

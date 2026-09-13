@@ -249,6 +249,7 @@ function advanceTurn(room) {
 function finishGame(room) {
   room.phase = 'ended';
   room.turn = null;
+  room.endedAt = Date.now(); // 供历史战绩列表展示与排序
   const scores = computeScores(room);
   const best = Math.max(...scores.map(s => s.total));
   const winners = scores.filter(s => s.total === best).map(s => s.playerId);
@@ -374,6 +375,30 @@ function computeScores(room) {
 
 // ---------- 日志 / 回放 ----------
 
+// 历史与战绩摘要：供"我参与过的对局"列表使用。未结束的房间也返回（便于重返对局），
+// 此时名次/得分/胜者为 null。非本房玩家返回 null。
+function historySummary(room, playerId) {
+  const me = room.players.find(p => p.id === playerId);
+  if (!me) return null;
+  const ended = room.phase === 'ended';
+  const scores = ended ? computeScores(room) : null;
+  const mine = scores ? scores.find(s => s.playerId === playerId) : null;
+  const winnerPlayer = room.winner ? room.players.find(p => p.id === room.winner) : null;
+  return {
+    code: room.code,
+    phase: room.phase,
+    createdAt: room.createdAt,
+    endedAt: room.endedAt || null,
+    youId: me.id,
+    youName: me.name,
+    players: room.players.map(p => p.name),
+    winner: room.winner,
+    winnerName: winnerPlayer ? winnerPlayer.name : null,
+    yourRank: scores ? scores.findIndex(s => s.playerId === playerId) + 1 : null,
+    yourTotal: mine ? mine.total : null,
+  };
+}
+
 function logEvent(room, type, data) {
   room.log.push({ seq: room.log.length + 1, t: Date.now(), type, ...data });
 }
@@ -461,5 +486,5 @@ module.exports = {
   resetConnectionsAfterRestart,
   setRuleSet, startGame,
   playWord, reinforce, endTurn, challenge, resolveChallenge, ensureAdjudicatorOnline,
-  computeScores, buildReplay, publicView, cascadeRemove,
+  computeScores, buildReplay, publicView, cascadeRemove, historySummary,
 };

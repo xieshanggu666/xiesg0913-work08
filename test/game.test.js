@@ -288,3 +288,33 @@ test('服务器重启：旧观战者立即清出，玩家保留座位置离线',
   }
   assert.match(g.addSpectator(room, 'spX', '再多一个'), /已满/);
 });
+
+test('历史战绩摘要：名次、得分、胜者与时间；未结束房间也可查', () => {
+  const room = makeRoom(['甲', '乙']);
+  assert.strictEqual(g.historySummary(room, '陌生人'), null, '非本房玩家没有战绩');
+
+  // 对局进行中：可重返，但还没有名次与得分
+  const playing = g.historySummary(room, 'p0');
+  assert.strictEqual(playing.phase, 'playing');
+  assert.strictEqual(playing.yourRank, null);
+  assert.strictEqual(playing.yourTotal, null);
+  assert.strictEqual(playing.endedAt, null);
+
+  playOk(room, '开心'); // 甲接一词，确保分出胜负
+  const total = room.players.length * room.ruleSet.rounds;
+  for (let i = 0; i < total; i++) g.endTurn(room, room.turn.playerId);
+
+  const s = g.historySummary(room, 'p0');
+  assert.strictEqual(s.phase, 'ended');
+  assert.ok(s.endedAt >= s.createdAt, '记录结束时间供列表展示与排序');
+  assert.strictEqual(s.winner, 'p0');
+  assert.strictEqual(s.winnerName, '甲');
+  assert.strictEqual(s.yourRank, 1);
+  assert.ok(s.yourTotal > 0);
+  assert.deepStrictEqual(s.players, ['甲', '乙']);
+  assert.strictEqual(s.youName, '甲');
+
+  const s1 = g.historySummary(room, 'p1');
+  assert.strictEqual(s1.yourRank, 2);
+  assert.strictEqual(s1.yourTotal, 0);
+});

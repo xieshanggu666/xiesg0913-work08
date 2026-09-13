@@ -11,6 +11,14 @@
     addSeenTip(k) {
       const a = store.seenTips; if (!a.includes(k)) { a.push(k); localStorage.setItem('wt_tips', JSON.stringify(a)); }
     },
+    // 历史与战绩：本机参与过的房间 token（用于换取战绩摘要与重返房间），上限 30 条
+    get history() { return JSON.parse(localStorage.getItem('wt_history') || '[]'); },
+    set history(v) { localStorage.setItem('wt_history', JSON.stringify(v)); },
+    addHistory(token, roomCode) {
+      const a = store.history.filter(e => e.roomCode !== roomCode);
+      a.unshift({ token, roomCode });
+      store.history = a.slice(0, 30);
+    },
   };
 
   let ws = null, state = null, prevState = null;
@@ -27,6 +35,7 @@
     ws = new WebSocket(`${proto}://${location.host}`);
     ws.onopen = () => {
       if (store.token) send({ type: 'reconnect', token: store.token });
+      if (store.history.length) send({ type: 'history', tokens: store.history.map(e => e.token) });
     };
     ws.onmessage = (e) => handle(JSON.parse(e.data));
     ws.onclose = () => {
@@ -42,6 +51,8 @@
     switch (msg.type) {
       case 'joined':
         store.token = msg.token;
+        // 观战是临时只读身份，不进历史；玩家 token 按房间码去重保存
+        if (!msg.spectator) store.addHistory(msg.token, msg.roomCode);
         break;
       case 'state':
         prevState = state;
@@ -65,7 +76,64 @@
         replayFrames = msg.frames; replayIdx = 0;
         openReplay();
         break;
+      case 'history':
+        onHistory(msg.entries);
+        break;
     }
+  }
+
+  // ---------- 历史与战绩 ----------
+
+  let historyEntries = [];
+
+  function onHistory(entries) {
+    historyEntries = entries;
+    // 服务器只回它认得的 token：本地失效记录（房间已删/数据已清）顺势清掉
+    const valid = new Set(entries.map(e => e.token));
+    store.history = store.history.filter(e => valid.has(e.token));
+    renderHistory();
+  }
+
+  function fmtDate(ts) {
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function renderHistory() {
+    const card = $('history-card');
+    if (!historyEntries.length) { card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    const ended = historyEntries.filter(e => e.phase === 'ended');
+    const wins = ended.filter(e => e.winner && e.winner === e.youId).length;
+    $('history-stats').textContent = ended.length
+      ? `已结束 ${ended.length} 场 · 胜 ${wins} 场 · 胜率 ${Math.round(wins / ended.length * 100)}%`
+      : '还没有已结束的对局';
+    $('history-list').innerHTML = historyEntries.map((e, i) => {
+      let badge, result;
+      if (e.phase === 'lobby') { badge = '<span class="badge">大厅中</span>'; result = '等待开局'; }
+      else if (e.phase === 'playing') { badge = '<span class="badge">对局中</span>'; result = '正在进行'; }
+      else if (!e.winner) { badge = '<span class="badge">平局</span>'; result = `你 ${e.yourTotal} 分`; }
+      else if (e.winner === e.youId) { badge = '<span class="badge win">胜利</span>'; result = `你 ${e.yourTotal} 分 · 第 1 名`; }
+      else { badge = '<span class="badge lose">落败</span>'; result = `${esc(e.winnerName)} 获胜 · 你 ${e.yourTotal} 分（第 ${e.yourRank} 名）`; }
+      const others = e.players.filter(n => n !== e.youName).map(esc).join('、') || '—';
+      return `<li>
+        <div>
+          <div><span class="h-code">${e.code}</span>${badge}</div>
+          <div class="h-sub">${fmtDate(e.endedAt || e.createdAt)} · 与 ${others} 对局 · ${result}</div>
+        </div>
+        <button class="link" data-hidx="${i}">${e.phase === 'ended' ? '回看' : '进入'}</button>
+      </li>`;
+    }).join('');
+    $('history-list').querySelectorAll('[data-hidx]').forEach(btn => {
+      btn.onclick = () => {
+        const entry = historyEntries[Number(btn.dataset.hidx)];
+        if (!entry) return;
+        // 凭该房间的玩家 token 重返：进行中回到对局，已结束回到结算（可回放）
+        store.token = entry.token;
+        send({ type: 'reconnect', token: entry.token });
+      };
+    });
   }
 
   // ---------- 状态变化 → 提示 / 教学 ----------
